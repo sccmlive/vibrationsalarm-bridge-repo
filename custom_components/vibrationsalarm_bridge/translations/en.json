@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Vibrationsalarm Bridge",
+        "description": "Select an alarm panel and an ESPHome device."
+      }
+    },
+    "error": {
+      "node_required": "Could not determine node name automatically. Please enter it."
+    }
+  }
+}
