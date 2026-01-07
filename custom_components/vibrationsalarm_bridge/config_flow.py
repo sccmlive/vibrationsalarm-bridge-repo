@@ -22,7 +22,6 @@ from .const import (
 
 
 def _slugify_node_name(name: str) -> str:
-    """Create a safe ESPHome-like node name (underscored)."""
     s = name.strip().lower().replace("-", "_").replace(" ", "_")
     s = re.sub(r"[^a-z0-9_]+", "_", s)
     s = re.sub(r"_+", "_", s).strip("_")
@@ -30,7 +29,6 @@ def _slugify_node_name(name: str) -> str:
 
 
 async def _guess_esphome_node_name_from_device(hass, device_id: str) -> str | None:
-    """Try to guess ESPHome node_name from the selected HA device name."""
     dev_reg = async_get_dev_reg(hass)
     device = dev_reg.async_get(device_id)
     if not device:
@@ -61,16 +59,6 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors[CONF_NODE_NAME] = "node_required"
 
             if not errors:
-                # ✅ Unique per (alarm_entity + node_name)
-                # Allows multiple entries for same alarm panel as long as node_name differs.
-                unique = f"{alarm_entity}_{node_name}"
-
-                await self.async_set_unique_id(unique)
-
-                # ✅ Important: allow re-adding if entry existed before and was removed
-                # (prevents "already_configured" getting stuck)
-                self._abort_if_unique_id_configured(updates={})
-
                 title = f"Vibrationsalarm Bridge ({alarm_entity} → {node_name})"
                 return self.async_create_entry(
                     title=title,
