@@ -59,10 +59,12 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors[CONF_NODE_NAME] = "node_required"
 
             if not errors:
-                await self.async_set_unique_id(f"{esphome_device_id}_{alarm_entity}")
+                # ✅ Unique per target device + alarm entity
+                # Allows multiple entries for same alarm panel if node_name differs.
+                await self.async_set_unique_id(f"{alarm_entity}_{node_name}")
                 self._abort_if_unique_id_configured()
 
-                title = f"Vibrationsalarm Bridge ({alarm_entity})"
+                title = f"Vibrationsalarm Bridge ({alarm_entity} → {node_name})"
                 return self.async_create_entry(
                     title=title,
                     data={
