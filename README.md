@@ -48,12 +48,6 @@ Der aktuelle Alarmstatus wird automatisch an das ESPHome-Gerät übertragen.
 Wenn **HACS** noch nicht installiert ist, folge bitte der offiziellen Anleitung:  
 👉 https://hacs.xyz/docs/setup/prerequisites
 
-Kurzfassung:
-1. Terminal / SSH in Home Assistant öffnen
-2. Installationsskript ausführen
-3. Home Assistant neu starten
-4. HACS unter **Einstellungen → Geräte & Dienste** hinzufügen
-
 ---
 
 ### Einrichtung der Integration (nach HACS-Installation)
@@ -116,7 +110,6 @@ The current alarm state is automatically sent to the ESPHome device.
 
 ### Installation via HACS (recommended)
 
-#### Install HACS (if not already installed)
 If **HACS** is not installed yet, follow the official guide:  
 👉 https://hacs.xyz/docs/setup/prerequisites
 
