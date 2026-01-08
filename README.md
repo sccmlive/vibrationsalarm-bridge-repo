@@ -164,7 +164,3 @@ The ESPHome device must provide the following API action:
 
 ```yaml
 set_alarm_state(alarm_state: string)
-
-This software is provided “as is”. It is not a certified alarm system and must not be relied upon for life or property safety.
-
-```
