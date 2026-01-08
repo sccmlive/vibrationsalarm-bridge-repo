@@ -150,13 +150,6 @@ The **Node Name** field is an optional fallback.
 
 ---
 
-## ⚙️ ESPHome Requirements
-
-The ESPHome device must provide the following API action:
-
-```yaml
-set_alarm_state(alarm_state: string)
-
 # ==================================================================
 # DISCLAIMER / HAFTUNGSAUSSCHLUSS
 #
@@ -172,3 +165,11 @@ set_alarm_state(alarm_state: string)
 # for the protection of life or property.
 # Use of this software is at your own risk.
 # ==================================================================
+## ⚙️ ESPHome Requirements
+
+The ESPHome device must provide the following API action:
+
+```yaml
+set_alarm_state(alarm_state: string)
+
+
