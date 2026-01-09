@@ -1,8 +1,13 @@
 DOMAIN = "vibe_alarm_sys"
 
 CONF_ALARM_ENTITY = "alarm_entity"
+# Legacy single-target keys (kept for backward compatibility)
 CONF_ESPHOME_DEVICE = "esphome_device_id"
 CONF_NODE_NAME = "node_name"
+
+# New multi-target keys
+CONF_ESPHOME_DEVICES = "esphome_device_ids"
+CONF_NODE_NAMES = "node_names"
 
 CONF_SEND_PANEL_NAME = "send_panel_name"
 CONF_SEND_SOURCE_TEXT = "send_source_text"

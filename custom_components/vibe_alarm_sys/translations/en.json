@@ -3,11 +3,12 @@
     "step": {
       "user": {
         "title": "VibeAlarmSys Bridge",
-        "description": "Select an alarm panel and an ESPHome device."
+        "description": "Select an alarm panel and one or more ESPHome devices."
       }
     },
     "error": {
-      "node_required": "Could not determine node name automatically. Please enter it."
+      "node_required": "Could not determine node name automatically. Please enter it.",
+      "node_count_mismatch": "Please provide exactly as many node names as selected ESPHome devices (comma-separated)."
     }
   }
 }

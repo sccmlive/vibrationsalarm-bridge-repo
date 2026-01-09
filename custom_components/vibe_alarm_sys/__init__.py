@@ -13,6 +13,8 @@ from .const import (
     CONF_ALARM_ENTITY,
     CONF_ESPHOME_DEVICE,
     CONF_NODE_NAME,
+    CONF_ESPHOME_DEVICES,
+    CONF_NODE_NAMES,
     CONF_SEND_PANEL_NAME,
     CONF_SEND_SOURCE_TEXT,
     DOMAIN,
@@ -42,20 +44,41 @@ def _friendly_name(hass: HomeAssistant, entity_id: str) -> str:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     alarm_entity = entry.data[CONF_ALARM_ENTITY]
-    node = entry.data[CONF_NODE_NAME]  # must match ESPHome service prefix in HA (underscored)
-
     send_panel_name = entry.data.get(CONF_SEND_PANEL_NAME, True)
     send_source_text = entry.data.get(CONF_SEND_SOURCE_TEXT, True)
 
-    # ESPHome actions appear as services under "esphome"
-    svc_set_state = f"{node}_set_alarm_state"
-    svc_set_source = f"{node}_set_alarm_source"
-    svc_set_panel = f"{node}_set_alarm_panel_name"
+    # --- Resolve targets (multi-device) ---
+    # New format: lists in entry.data
+    device_ids: list[str] | None = entry.data.get(CONF_ESPHOME_DEVICES)
+    node_names: list[str] | None = entry.data.get(CONF_NODE_NAMES)
 
-    # Panel name (optional): take ESPHome device name, else alarm entity friendly name
+    # Backward compatibility (old single-target keys)
+    if not device_ids:
+        legacy_dev = entry.data.get(CONF_ESPHOME_DEVICE)
+        if legacy_dev:
+            device_ids = [legacy_dev]
+    if not node_names:
+        legacy_node = entry.data.get(CONF_NODE_NAME)
+        if legacy_node:
+            node_names = [legacy_node]
+
+    if not device_ids or not node_names:
+        # Misconfigured entry; nothing to do
+        return False
+
+    targets: list[dict[str, str]] = []
     dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get(entry.data[CONF_ESPHOME_DEVICE])
-    panel_name = device.name if device and device.name else _friendly_name(hass, alarm_entity)
+    for idx, node in enumerate(node_names):
+        dev_id = device_ids[idx] if idx < len(device_ids) else device_ids[-1]
+        device = dev_reg.async_get(dev_id)
+        panel_name = device.name if device and device.name else _friendly_name(hass, alarm_entity)
+        targets.append(
+            {
+                "node": node,
+                "device_id": dev_id,
+                "panel_name": panel_name,
+            }
+        )
 
     # Ring buffer: recently triggered binary_sensors (entity_id, timestamp)
     recent_triggers: deque[tuple[str, dt_util.dt.datetime]] = deque(maxlen=120)
@@ -83,24 +106,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
         await hass.services.async_call("esphome", service, data, blocking=False)
 
-    async def _push_state(state_str: str) -> None:
-        # 1) Always send alarm state
-        await _safe_call(svc_set_state, {"alarm_state": state_str})
+    async def _push_to_all(state_str: str) -> None:
+        """Push alarm state (and optional info) to all configured ESPHome targets."""
+        for t in targets:
+            node = t["node"]
+            svc_set_state = f"{node}_set_alarm_state"
+            svc_set_source = f"{node}_set_alarm_source"
+            svc_set_panel = f"{node}_set_alarm_panel_name"
 
-        # 2) Optional: panel name
-        if send_panel_name:
-            await _safe_call(svc_set_panel, {"panel_name": panel_name})
+            # 1) Always send alarm state
+            await _safe_call(svc_set_state, {"alarm_state": state_str})
 
-        # 3) Optional: source text
-        if not send_source_text:
-            return
+            # 2) Optional: panel name (per device)
+            if send_panel_name:
+                await _safe_call(svc_set_panel, {"panel_name": t["panel_name"]})
 
-        if state_str == "triggered":
-            source = _pick_recent_trigger_name() or "Unbekannter Auslöser"
-            await _safe_call(svc_set_source, {"alarm_source": source})
-        else:
-            # Clear source on non-trigger states (ESP ignores '-' in your display logic)
-            await _safe_call(svc_set_source, {"alarm_source": "-"})
+            # 3) Optional: source text
+            if not send_source_text:
+                continue
+
+            if state_str == "triggered":
+                source = _pick_recent_trigger_name() or "Unbekannter Auslöser"
+                await _safe_call(svc_set_source, {"alarm_source": source})
+            else:
+                # Clear source on non-trigger states (ESP ignores '-' in your display logic)
+                await _safe_call(svc_set_source, {"alarm_source": "-"})
 
     # --- Listener 1: Alarm panel state changes (per entry!) ---
     @callback
@@ -113,7 +143,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if st in (None, "unknown", "unavailable"):
             return
 
-        hass.async_create_task(_push_state(st))
+        hass.async_create_task(_push_to_all(st))
 
     unsub_alarm = async_track_state_change_event(hass, [alarm_entity], _handle_alarm_event)
     entry.async_on_unload(unsub_alarm)
@@ -140,10 +170,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # On startup: push current state once
     cur = hass.states.get(alarm_entity)
     if cur and cur.state not in (None, "unknown", "unavailable"):
-        hass.async_create_task(_push_state(cur.state))
+        hass.async_create_task(_push_to_all(cur.state))
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate config entries to the new multi-target format."""
+    if entry.version >= 2:
+        return True
+
+    data = dict(entry.data)
+
+    # Convert old single-target fields into list-based fields
+    legacy_dev = data.pop(CONF_ESPHOME_DEVICE, None)
+    legacy_node = data.pop(CONF_NODE_NAME, None)
+
+    if legacy_dev and CONF_ESPHOME_DEVICES not in data:
+        data[CONF_ESPHOME_DEVICES] = [legacy_dev]
+    if legacy_node and CONF_NODE_NAMES not in data:
+        data[CONF_NODE_NAMES] = [legacy_node]
+
+    hass.config_entries.async_update_entry(entry, data=data, version=2)
     return True
