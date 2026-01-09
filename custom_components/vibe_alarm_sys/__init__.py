@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from datetime import timedelta
 import re
+import asyncio
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -94,6 +95,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     manual_triggers = set(entry.data.get(CONF_TRIGGER_ENTITIES, []) or [])
     recent_triggers: deque[tuple[str, dt_util.dt.datetime]] = deque(maxlen=120)
 
+    # Cooldown to avoid spamming ESPHome when a manual trigger chatters.
+    manual_last_sent: dict[str, dt_util.dt.datetime] = {}
+    MANUAL_COOLDOWN_SECONDS = 3
+    MANUAL_RESET_SECONDS = 10
+
     def _record_trigger(entity_id: str) -> None:
         recent_triggers.append((entity_id, dt_util.utcnow()))
 
@@ -110,6 +116,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 continue
             return _friendly_name(hass, entity_id)
         return None
+
+    def _fallback_scan_last_changed() -> str | None:
+        """Fallback: scan current HA states to find a likely trigger.
+
+        Used when the alarm panel flips to triggered before we recorded the sensor.
+        We prefer entities that are currently active and changed recently.
+        """
+        now = dt_util.utcnow()
+        window = timedelta(seconds=TRIGGER_WINDOW_SECONDS)
+
+        best_name: str | None = None
+        best_ts = None
+
+        for st in hass.states.async_all("binary_sensor"):
+            if not st:
+                continue
+
+            entity_id = st.entity_id
+            attrs = st.attributes or {}
+            dc = attrs.get("device_class")
+
+            # Accept either alarm-like device_classes or explicitly configured manual triggers.
+            if dc is None and entity_id not in manual_triggers:
+                continue
+            if dc is not None and dc not in {"door", "window", "opening", "garage_door", "motion", "occupancy", "presence", "lock"} and entity_id not in manual_triggers:
+                continue
+
+            state = (st.state or "").lower()
+            if state not in ACTIVE_STATES:
+                continue
+
+            ts = getattr(st, "last_changed", None)
+            if not ts or now - ts > window:
+                continue
+
+            if best_ts is None or ts > best_ts:
+                best_ts = ts
+                best_name = attrs.get("friendly_name") or entity_id
+
+        return best_name
 
     async def _safe_call(service: str, data: dict) -> None:
         """Call ESPHome action only if the service exists (device online + action present)."""
@@ -132,13 +178,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
 
         if state_str == "triggered":
-            source = _pick_recent_trigger_name() or "Alarm"
+            # Small delay to avoid race conditions where the alarm state changes
+            # slightly before the triggering sensor state change is processed.
+            await asyncio.sleep(0.25)
+            source = _pick_recent_trigger_name() or _fallback_scan_last_changed() or "Alarm"
             for node_prefix, _pn in targets:
                 await _safe_call(f"{node_prefix}_set_alarm_source", {"alarm_source": source})
         else:
             # Clear source on non-trigger states (ESP ignores '-' in your display logic)
             for node_prefix, _pn in targets:
                 await _safe_call(f"{node_prefix}_set_alarm_source", {"alarm_source": "-"})
+
+    async def _push_manual_trigger(entity_id: str) -> None:
+        """Send an immediate 'triggered' pulse to ESPHome when a manual trigger fires.
+
+        This is used for sensors like Arlo motion where the alarm panel might not
+        switch to 'triggered'. After a short delay, the display is restored to the
+        current alarm panel state.
+        """
+        name = _friendly_name(hass, entity_id)
+
+        # Push triggered + source to all targets
+        for node_prefix, _pn in targets:
+            await _safe_call(f"{node_prefix}_set_alarm_state", {"alarm_state": "triggered"})
+        if send_panel_name:
+            for node_prefix, _pn in targets:
+                await _safe_call(f"{node_prefix}_set_alarm_panel_name", {"panel_name": _pn})
+        if send_source_text:
+            for node_prefix, _pn in targets:
+                await _safe_call(f"{node_prefix}_set_alarm_source", {"alarm_source": name})
+
+        # Restore current alarm panel state after a short pulse
+        await asyncio.sleep(MANUAL_RESET_SECONDS)
+        cur = hass.states.get(alarm_entity)
+        if cur and cur.state not in (None, "unknown", "unavailable"):
+            await _push_state(cur.state)
 
     # --- Listener 1: Alarm panel state changes (per entry!) ---
     @callback
@@ -178,6 +252,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if entity_id in manual_triggers:
             if old != new and new in ACTIVE_STATES:
                 _record_trigger(entity_id)
+                # Rate limit to avoid rapid repeats
+                now = dt_util.utcnow()
+                last = manual_last_sent.get(entity_id)
+                if not last or (now - last) > timedelta(seconds=MANUAL_COOLDOWN_SECONDS):
+                    manual_last_sent[entity_id] = now
+                    hass.async_create_task(_push_manual_trigger(entity_id))
             return
 
         # 2) Universal tracking for binary_sensors used in alarm setups
