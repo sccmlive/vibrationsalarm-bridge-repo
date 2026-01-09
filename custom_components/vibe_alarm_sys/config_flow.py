@@ -13,6 +13,7 @@ from .const import (
     DOMAIN,
     CONF_ALARM_ENTITY,
     CONF_ESPHOME_DEVICE,
+    CONF_ESPHOME_DEVICES,
     CONF_NODE_NAME,
     CONF_SEND_PANEL_NAME,
     CONF_SEND_SOURCE_TEXT,
@@ -46,13 +47,15 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             alarm_entity = user_input[CONF_ALARM_ENTITY]
-            esphome_device_id = user_input[CONF_ESPHOME_DEVICE]
+            esphome_device_ids = user_input.get(CONF_ESPHOME_DEVICES) or []
+            if not esphome_device_ids and CONF_ESPHOME_DEVICE in user_input:
+                esphome_device_ids = [user_input[CONF_ESPHOME_DEVICE]]
             send_panel_name = user_input.get(CONF_SEND_PANEL_NAME, DEFAULT_SEND_PANEL_NAME)
             send_source_text = user_input.get(CONF_SEND_SOURCE_TEXT, DEFAULT_SEND_SOURCE_TEXT)
 
             node_name = user_input.get(CONF_NODE_NAME, "").strip()
             if not node_name:
-                guessed = await _guess_esphome_node_name_from_device(self.hass, esphome_device_id)
+                guessed = await _guess_esphome_node_name_from_device(self.hass, esphome_device_ids[0])
                 if guessed:
                     node_name = guessed
                 else:
@@ -64,7 +67,8 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     title=title,
                     data={
                         CONF_ALARM_ENTITY: alarm_entity,
-                        CONF_ESPHOME_DEVICE: esphome_device_id,
+                        CONF_ESPHOME_DEVICES: esphome_device_ids,
+                        CONF_ESPHOME_DEVICE: esphome_device_ids[0],
                         CONF_NODE_NAME: node_name,
                         CONF_SEND_PANEL_NAME: send_panel_name,
                         CONF_SEND_SOURCE_TEXT: send_source_text,
@@ -76,8 +80,8 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_ALARM_ENTITY): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="alarm_control_panel")
                 ),
-                vol.Required(CONF_ESPHOME_DEVICE): selector.DeviceSelector(
-                    selector.DeviceSelectorConfig(integration="esphome")
+                vol.Required(CONF_ESPHOME_DEVICES): selector.DeviceSelector(
+                    selector.DeviceSelectorConfig(integration="esphome", multiple=True)
                 ),
                 vol.Optional(CONF_NODE_NAME, default=""): str,
                 vol.Optional(CONF_SEND_PANEL_NAME, default=DEFAULT_SEND_PANEL_NAME): bool,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import timedelta
+import re
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -12,6 +13,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_ALARM_ENTITY,
     CONF_ESPHOME_DEVICE,
+    CONF_ESPHOME_DEVICES,
     CONF_NODE_NAME,
     CONF_SEND_PANEL_NAME,
     CONF_SEND_SOURCE_TEXT,
@@ -42,22 +44,50 @@ def _friendly_name(hass: HomeAssistant, entity_id: str) -> str:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     alarm_entity = entry.data[CONF_ALARM_ENTITY]
-    node = entry.data[CONF_NODE_NAME]  # must match ESPHome service prefix in HA (underscored)
 
     send_panel_name = entry.data.get(CONF_SEND_PANEL_NAME, True)
     send_source_text = entry.data.get(CONF_SEND_SOURCE_TEXT, True)
 
-    # ESPHome actions appear as services under "esphome"
-    svc_set_state = f"{node}_set_alarm_state"
-    svc_set_source = f"{node}_set_alarm_source"
-    svc_set_panel = f"{node}_set_alarm_panel_name"
+    # --- Multi ESPHome targets ---
+    device_ids = entry.data.get(CONF_ESPHOME_DEVICES) or []
+    if not device_ids and entry.data.get(CONF_ESPHOME_DEVICE):
+        device_ids = [entry.data[CONF_ESPHOME_DEVICE]]
 
-    # Panel name (optional): take ESPHome device name, else alarm entity friendly name
+    def _slugify(val: str) -> str:
+        v = val.lower()
+        v = re.sub(r"[^a-z0-9_]+", "_", v)
+        v = re.sub(r"_+", "_", v).strip("_")
+        return v
+
+    def _node_from_device_id(dev_id: str) -> str | None:
+        dev_reg = dr.async_get(hass)
+        dev = dev_reg.async_get(dev_id)
+        if not dev:
+            return None
+        # Preferred: identifier ("esphome", "<node_name>")
+        for domain, ident in dev.identifiers:
+            if domain == "esphome" and isinstance(ident, str) and ident.strip():
+                return _slugify(ident)
+        # Fallback: stored node_name (legacy)
+        stored = entry.data.get(CONF_NODE_NAME)
+        if isinstance(stored, str) and stored.strip():
+            return _slugify(stored)
+        # Last fallback: device name
+        if dev.name:
+            return _slugify(dev.name)
+        return None
+
+    # Build list of (node_prefix, panel_name)
     dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get(entry.data[CONF_ESPHOME_DEVICE])
-    panel_name = device.name if device and device.name else _friendly_name(hass, alarm_entity)
-
-    # Ring buffer: recently triggered binary_sensors (entity_id, timestamp)
+    alarm_panel_name = _friendly_name(hass, alarm_entity)
+    targets: list[tuple[str, str]] = []
+    for dev_id in device_ids:
+        node_prefix = _node_from_device_id(dev_id)
+        if not node_prefix:
+            continue
+        dev = dev_reg.async_get(dev_id)
+        pn = dev.name if dev and dev.name else alarm_panel_name
+        targets.append((node_prefix, pn))
     recent_triggers: deque[tuple[str, dt_util.dt.datetime]] = deque(maxlen=120)
 
     def _record_trigger(entity_id: str) -> None:
@@ -85,22 +115,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _push_state(state_str: str) -> None:
         # 1) Always send alarm state
-        await _safe_call(svc_set_state, {"alarm_state": state_str})
+        for node_prefix, _pn in targets:
+            await _safe_call(f"{node_prefix}_set_alarm_state", {"alarm_state": state_str})
 
         # 2) Optional: panel name
         if send_panel_name:
-            await _safe_call(svc_set_panel, {"panel_name": panel_name})
+            for node_prefix, _pn in targets:
+                await _safe_call(f"{node_prefix}_set_alarm_panel_name", {"panel_name": _pn})
 
         # 3) Optional: source text
         if not send_source_text:
             return
 
         if state_str == "triggered":
-            source = _pick_recent_trigger_name() or "Unbekannter Auslöser"
-            await _safe_call(svc_set_source, {"alarm_source": source})
+            source = _pick_recent_trigger_name() or "Alarm"
+            for node_prefix, _pn in targets:
+                await _safe_call(f"{node_prefix}_set_alarm_source", {"alarm_source": source})
         else:
             # Clear source on non-trigger states (ESP ignores '-' in your display logic)
-            await _safe_call(svc_set_source, {"alarm_source": "-"})
+            for node_prefix, _pn in targets:
+                await _safe_call(f"{node_prefix}_set_alarm_source", {"alarm_source": "-"})
 
     # --- Listener 1: Alarm panel state changes (per entry!) ---
     @callback

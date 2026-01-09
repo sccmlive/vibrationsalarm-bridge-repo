@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "VibeAlarmSys Bridge",
-        "description": "Select an alarm panel and an ESPHome device."
+        "description": "Select an alarm panel and one or more ESPHome devices."
       }
     },
     "error": {
