@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
 from homeassistant.helpers import selector
 
 from .const import DOMAIN
@@ -22,13 +21,23 @@ class VibeAlarmSysConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
+                # 🔔 Alarm Panel
                 vol.Required("alarm_entity"): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="alarm_control_panel")
                 ),
 
+                # 📡 ESPHome Geräte (MULTI!)
+                vol.Required("esphome_devices"): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="esphome",
+                        multiple=True,
+                    )
+                ),
+
+                # ⏱ Lookback – DEFAULT = 60 Sekunden
                 vol.Optional(
                     "alarm_trigger_lookback_seconds",
-                    default=60,  # <<< DEFAULT AUF 60
+                    default=60,
                 ): vol.Coerce(int),
             }
         )
