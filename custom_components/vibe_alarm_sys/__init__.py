@@ -21,6 +21,10 @@ from .const import (
     CONF_SEND_SOURCE_TEXT,
     DOMAIN,
     TRIGGER_WINDOW_SECONDS,
+    CONF_ALARM_TRIGGER_LOOKBACK_SECONDS,
+    DEFAULT_ALARM_TRIGGER_LOOKBACK_SECONDS,
+    CONF_AUTO_TRACK_DEVICE_CLASSES,
+    DEFAULT_AUTO_TRACK_DEVICE_CLASSES,
     CONF_TRIGGER_ENTITIES,
     CONF_TRIGGER_RESET_SECONDS,
     CONF_TRIGGER_COOLDOWN_SECONDS,
@@ -60,6 +64,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     trigger_entities: list[str] = entry.data.get(CONF_TRIGGER_ENTITIES, [])
     trigger_reset_seconds: int = int(entry.data.get(CONF_TRIGGER_RESET_SECONDS, DEFAULT_TRIGGER_RESET_SECONDS))
     trigger_cooldown_seconds: int = int(entry.data.get(CONF_TRIGGER_COOLDOWN_SECONDS, DEFAULT_TRIGGER_COOLDOWN_SECONDS))
+    lookback_seconds: int = int(entry.data.get(CONF_ALARM_TRIGGER_LOOKBACK_SECONDS, DEFAULT_ALARM_TRIGGER_LOOKBACK_SECONDS))
+    auto_track_device_classes: bool = bool(entry.data.get(CONF_AUTO_TRACK_DEVICE_CLASSES, DEFAULT_AUTO_TRACK_DEVICE_CLASSES))
 
     # --- Resolve targets (multi-device) ---
     # New format: lists in entry.data
@@ -94,27 +100,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             }
         )
 
-    # Ring buffer: recently triggered binary_sensors (entity_id, timestamp)
-    recent_triggers: deque[tuple[str, dt_util.dt.datetime]] = deque(maxlen=120)
+    # Ring buffer: recently triggered sensors (entity_id, friendly_name, timestamp)
+    recent_triggers: deque[tuple[str, str, dt_util.dt.datetime]] = deque(maxlen=240)
 
     # Last known 'source' attribute from the alarm panel (Alarmo zone text etc.)
     last_alarm_source: str | None = None
 
-    def _record_trigger(entity_id: str) -> None:
-        recent_triggers.append((entity_id, dt_util.utcnow()))
+    def _record_trigger(entity_id: str, name: str | None = None) -> None:
+        recent_triggers.append((entity_id, (name or _friendly_name(hass, entity_id)), dt_util.utcnow()))
 
     def _pick_recent_trigger_name() -> str | None:
-        """Return friendly name of the most recent trigger within the time window."""
+        """Return friendly name of the most recent trigger within the lookback window."""
         if not recent_triggers:
             return None
         now = dt_util.utcnow()
-        window = timedelta(seconds=TRIGGER_WINDOW_SECONDS)
+        # Prefer configured lookback, fall back to legacy constant.
+        window = timedelta(seconds=lookback_seconds or TRIGGER_WINDOW_SECONDS)
 
         # check newest -> oldest
-        for entity_id, ts in reversed(recent_triggers):
+        for entity_id, name, ts in reversed(recent_triggers):
             if now - ts > window:
                 continue
-            return _friendly_name(hass, entity_id)
+            return name
         return None
 
     async def _safe_call(service: str, data: dict) -> None:
@@ -148,10 +155,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                 if prefer_trigger_friendly_name:
                     # Prefer the most recent trigger entity's friendly name, fall back to panel source
-                    source = recent or panel_src or "Unbekannter Auslöser"
+                    source = recent or panel_src or "Alarm"
                 else:
                     # Prefer the alarm panel's own source/zone text, fall back to recent trigger name
-                    source = panel_src or recent or "Unbekannter Auslöser"
+                    source = panel_src or recent or "Alarm"
 
                 await _safe_call(svc_set_source, {"alarm_source": source})
             else:
@@ -186,6 +193,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _handle_trigger(entity_id: str, friendly: str) -> None:
         """Push a short 'triggered' pulse to all ESPHome targets."""
+        # Record this trigger so that, if Alarmo also flips to triggered shortly after,
+        # we can report the same sensor name.
+        _record_trigger(entity_id, friendly)
         # Send source (if enabled) and trigger state
         if send_source_text:
             # Use the triggering entity friendly name
@@ -239,16 +249,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         _last_trigger_ts[entity_id] = now_ts
         friendly = new_state.attributes.get("friendly_name") or entity_id
+        # Record in the shared recent-trigger cache, so an imminent alarm trigger can
+        # resolve to this sensor name.
+        _record_trigger(entity_id, str(friendly))
         hass.async_create_task(_handle_trigger(entity_id, friendly))
 
     if trigger_entities:
         unsub_triggers = async_track_state_change_event(hass, trigger_entities, _handle_trigger_entities)
         entry.async_on_unload(unsub_triggers)
 
-    # --- Listener 2: Track recently triggered binary_sensors (universal) ---
+    # --- Listener 2: Track recently triggered sensors (hybrid auto-tracking) ---
+    _AUTO_DEVICE_CLASSES = {"motion", "opening"}
+
+    def _is_meaningful_trigger(old_s: str | None, new_s: str | None) -> bool:
+        if not new_s or new_s in ("unknown", "unavailable"):
+            return False
+
+        # Treat transitions into "on" or "open" as triggers.
+        trigger_states = {"on", "open"}
+        if new_s in trigger_states and old_s not in trigger_states:
+            return True
+
+        # Common contact representation: closed -> open
+        if old_s == "closed" and new_s == "open":
+            return True
+
+        return False
     @callback
     def _handle_any_state_change(event) -> None:
         entity_id = event.data.get("entity_id")
+        if not auto_track_device_classes:
+            return
         if not entity_id or not entity_id.startswith("binary_sensor."):
             return
 
@@ -257,9 +288,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not new_state or not old_state:
             return
 
-        # Only count a real trigger: off -> on
-        if old_state.state == "off" and new_state.state == "on":
-            _record_trigger(entity_id)
+        dev_class = (new_state.attributes or {}).get("device_class")
+        if dev_class not in _AUTO_DEVICE_CLASSES:
+            return
+
+        if _is_meaningful_trigger(old_state.state, new_state.state):
+            name = new_state.attributes.get("friendly_name") or getattr(new_state, "name", None) or entity_id
+            _record_trigger(entity_id, str(name))
 
     unsub_bus = hass.bus.async_listen("state_changed", _handle_any_state_change)
     entry.async_on_unload(unsub_bus)
@@ -278,7 +313,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate config entries to the new multi-target format."""
-    if entry.version >= 3:
+    if entry.version >= 4:
         return True
 
     data = dict(entry.data)
@@ -296,6 +331,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data.setdefault(CONF_TRIGGER_RESET_SECONDS, DEFAULT_TRIGGER_RESET_SECONDS)
     data.setdefault(CONF_TRIGGER_COOLDOWN_SECONDS, DEFAULT_TRIGGER_COOLDOWN_SECONDS)
     data.setdefault(CONF_PREFER_TRIGGER_FRIENDLY_NAME, DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME)
+    data.setdefault(CONF_ALARM_TRIGGER_LOOKBACK_SECONDS, DEFAULT_ALARM_TRIGGER_LOOKBACK_SECONDS)
+    data.setdefault(CONF_AUTO_TRACK_DEVICE_CLASSES, DEFAULT_AUTO_TRACK_DEVICE_CLASSES)
 
-    hass.config_entries.async_update_entry(entry, data=data, version=3)
+    hass.config_entries.async_update_entry(entry, data=data, version=4)
     return True

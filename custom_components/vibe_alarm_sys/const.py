@@ -15,11 +15,21 @@ CONF_SEND_SOURCE_TEXT = "send_source_text"
 DEFAULT_SEND_PANEL_NAME = True
 DEFAULT_SEND_SOURCE_TEXT = True
 
-# --- Universal Trigger Detection (no Alarmo dependency) ---
-# When the alarm_control_panel switches to "triggered", the integration will look for the
-# most recently triggered binary_sensor (off -> on) within this time window and send its
-# friendly name to the ESPHome device via set_alarm_source.
-TRIGGER_WINDOW_SECONDS = 30
+# --- Hybrid Trigger Detection (stable + universal) ---
+# The integration can track recently triggered sensors and, when the alarm panel switches
+# to "triggered", send the most likely sensor name to ESPHome.
+
+# Lookback window (seconds) used to pick the most recent trigger before the alarm.
+CONF_ALARM_TRIGGER_LOOKBACK_SECONDS = "alarm_trigger_lookback_seconds"
+DEFAULT_ALARM_TRIGGER_LOOKBACK_SECONDS = 10
+
+# If enabled, automatically track binary_sensors with relevant device_class (motion/opening)
+# so users don't need to manually select every sensor.
+CONF_AUTO_TRACK_DEVICE_CLASSES = "auto_track_device_classes"
+DEFAULT_AUTO_TRACK_DEVICE_CLASSES = True
+
+# Backward compatible constant name used by older versions.
+TRIGGER_WINDOW_SECONDS = DEFAULT_ALARM_TRIGGER_LOOKBACK_SECONDS
 
 
 # Optional: additional entities that should trigger a push to ESPHome even if the alarm panel

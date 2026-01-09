@@ -27,6 +27,10 @@ from .const import (
     DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME,
     DEFAULT_TRIGGER_RESET_SECONDS,
     DEFAULT_TRIGGER_COOLDOWN_SECONDS,
+    CONF_ALARM_TRIGGER_LOOKBACK_SECONDS,
+    DEFAULT_ALARM_TRIGGER_LOOKBACK_SECONDS,
+    CONF_AUTO_TRACK_DEVICE_CLASSES,
+    DEFAULT_AUTO_TRACK_DEVICE_CLASSES,
 )
 
 
@@ -54,7 +58,7 @@ async def _guess_esphome_node_name_from_device(hass, device_id: str) -> str | No
 
 
 class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    VERSION = 2
+    VERSION = 4
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         errors: dict[str, str] = {}
@@ -66,6 +70,9 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             send_panel_name = user_input.get(CONF_SEND_PANEL_NAME, DEFAULT_SEND_PANEL_NAME)
             send_source_text = user_input.get(CONF_SEND_SOURCE_TEXT, DEFAULT_SEND_SOURCE_TEXT)
             prefer_trigger_friendly_name = bool(user_input.get(CONF_PREFER_TRIGGER_FRIENDLY_NAME, DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME))
+
+            lookback_seconds = int(user_input.get(CONF_ALARM_TRIGGER_LOOKBACK_SECONDS, DEFAULT_ALARM_TRIGGER_LOOKBACK_SECONDS))
+            auto_track_device_classes = bool(user_input.get(CONF_AUTO_TRACK_DEVICE_CLASSES, DEFAULT_AUTO_TRACK_DEVICE_CLASSES))
 
             trigger_entities = user_input.get(CONF_TRIGGER_ENTITIES) or []
             trigger_reset_seconds = int(user_input.get(CONF_TRIGGER_RESET_SECONDS, DEFAULT_TRIGGER_RESET_SECONDS))
@@ -101,6 +108,8 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_TRIGGER_RESET_SECONDS: trigger_reset_seconds,
                         CONF_TRIGGER_COOLDOWN_SECONDS: trigger_cooldown_seconds,
                         CONF_PREFER_TRIGGER_FRIENDLY_NAME: prefer_trigger_friendly_name,
+                        CONF_ALARM_TRIGGER_LOOKBACK_SECONDS: lookback_seconds,
+                        CONF_AUTO_TRACK_DEVICE_CLASSES: auto_track_device_classes,
                     },
                 )
 
@@ -117,6 +126,8 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_SEND_PANEL_NAME, default=DEFAULT_SEND_PANEL_NAME): bool,
                 vol.Optional(CONF_SEND_SOURCE_TEXT, default=DEFAULT_SEND_SOURCE_TEXT): bool,
                 vol.Optional(CONF_PREFER_TRIGGER_FRIENDLY_NAME, default=DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME): bool,
+                vol.Optional(CONF_ALARM_TRIGGER_LOOKBACK_SECONDS, default=DEFAULT_ALARM_TRIGGER_LOOKBACK_SECONDS): vol.Coerce(int),
+                vol.Optional(CONF_AUTO_TRACK_DEVICE_CLASSES, default=DEFAULT_AUTO_TRACK_DEVICE_CLASSES): bool,
                 vol.Optional(CONF_TRIGGER_ENTITIES, default=[]): selector.EntitySelector(
                     selector.EntitySelectorConfig(multiple=True)
                 ),
