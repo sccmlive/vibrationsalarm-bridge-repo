@@ -20,3 +20,13 @@ DEFAULT_SEND_SOURCE_TEXT = True
 # most recently triggered binary_sensor (off -> on) within this time window and send its
 # friendly name to the ESPHome device via set_alarm_source.
 TRIGGER_WINDOW_SECONDS = 30
+
+
+# Optional: additional entities that should trigger a push to ESPHome even if the alarm panel
+# itself does not switch to "triggered" (e.g., camera motion binary_sensors).
+CONF_TRIGGER_ENTITIES = "trigger_entities"
+CONF_TRIGGER_RESET_SECONDS = "trigger_reset_seconds"
+CONF_TRIGGER_COOLDOWN_SECONDS = "trigger_cooldown_seconds"
+
+DEFAULT_TRIGGER_RESET_SECONDS = 10
+DEFAULT_TRIGGER_COOLDOWN_SECONDS = 5

@@ -20,6 +20,11 @@ from .const import (
     CONF_SEND_SOURCE_TEXT,
     DEFAULT_SEND_PANEL_NAME,
     DEFAULT_SEND_SOURCE_TEXT,
+    CONF_TRIGGER_ENTITIES,
+    CONF_TRIGGER_RESET_SECONDS,
+    CONF_TRIGGER_COOLDOWN_SECONDS,
+    DEFAULT_TRIGGER_RESET_SECONDS,
+    DEFAULT_TRIGGER_COOLDOWN_SECONDS,
 )
 
 
@@ -59,6 +64,10 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             send_panel_name = user_input.get(CONF_SEND_PANEL_NAME, DEFAULT_SEND_PANEL_NAME)
             send_source_text = user_input.get(CONF_SEND_SOURCE_TEXT, DEFAULT_SEND_SOURCE_TEXT)
 
+            trigger_entities = user_input.get(CONF_TRIGGER_ENTITIES) or []
+            trigger_reset_seconds = int(user_input.get(CONF_TRIGGER_RESET_SECONDS, DEFAULT_TRIGGER_RESET_SECONDS))
+            trigger_cooldown_seconds = int(user_input.get(CONF_TRIGGER_COOLDOWN_SECONDS, DEFAULT_TRIGGER_COOLDOWN_SECONDS))
+
             # Optional override: comma-separated node names in the same order as selected devices.
             node_override_raw = (user_input.get(CONF_NODE_NAMES) or "").strip()
             node_names: list[str] = []
@@ -85,6 +94,9 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_NODE_NAMES: node_names,
                         CONF_SEND_PANEL_NAME: send_panel_name,
                         CONF_SEND_SOURCE_TEXT: send_source_text,
+                        CONF_TRIGGER_ENTITIES: trigger_entities,
+                        CONF_TRIGGER_RESET_SECONDS: trigger_reset_seconds,
+                        CONF_TRIGGER_COOLDOWN_SECONDS: trigger_cooldown_seconds,
                     },
                 )
 
@@ -100,6 +112,12 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_NODE_NAMES, default=""): str,
                 vol.Optional(CONF_SEND_PANEL_NAME, default=DEFAULT_SEND_PANEL_NAME): bool,
                 vol.Optional(CONF_SEND_SOURCE_TEXT, default=DEFAULT_SEND_SOURCE_TEXT): bool,
+                vol.Optional(CONF_TRIGGER_ENTITIES, default=[]): selector.EntitySelector(
+                    selector.EntitySelectorConfig(multiple=True)
+                ),
+                vol.Optional(CONF_TRIGGER_RESET_SECONDS, default=DEFAULT_TRIGGER_RESET_SECONDS): vol.Coerce(int),
+                vol.Optional(CONF_TRIGGER_COOLDOWN_SECONDS, default=DEFAULT_TRIGGER_COOLDOWN_SECONDS): vol.Coerce(int),
+
             }
         )
 

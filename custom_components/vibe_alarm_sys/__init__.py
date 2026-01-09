@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from collections import deque
 from datetime import timedelta
 
@@ -19,6 +21,11 @@ from .const import (
     CONF_SEND_SOURCE_TEXT,
     DOMAIN,
     TRIGGER_WINDOW_SECONDS,
+    CONF_TRIGGER_ENTITIES,
+    CONF_TRIGGER_RESET_SECONDS,
+    CONF_TRIGGER_COOLDOWN_SECONDS,
+    DEFAULT_TRIGGER_RESET_SECONDS,
+    DEFAULT_TRIGGER_COOLDOWN_SECONDS,
 )
 
 PLATFORMS: list[str] = []
@@ -46,6 +53,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     alarm_entity = entry.data[CONF_ALARM_ENTITY]
     send_panel_name = entry.data.get(CONF_SEND_PANEL_NAME, True)
     send_source_text = entry.data.get(CONF_SEND_SOURCE_TEXT, True)
+
+    trigger_entities: list[str] = entry.data.get(CONF_TRIGGER_ENTITIES, [])
+    trigger_reset_seconds: int = int(entry.data.get(CONF_TRIGGER_RESET_SECONDS, DEFAULT_TRIGGER_RESET_SECONDS))
+    trigger_cooldown_seconds: int = int(entry.data.get(CONF_TRIGGER_COOLDOWN_SECONDS, DEFAULT_TRIGGER_COOLDOWN_SECONDS))
 
     # --- Resolve targets (multi-device) ---
     # New format: lists in entry.data
@@ -148,6 +159,70 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unsub_alarm = async_track_state_change_event(hass, [alarm_entity], _handle_alarm_event)
     entry.async_on_unload(unsub_alarm)
 
+
+    # --- Listener 1b: Additional trigger entities (e.g., camera motion binary_sensors) ---
+    _last_trigger_ts: dict[str, float] = {}
+
+    async def _handle_trigger(entity_id: str, friendly: str) -> None:
+        """Push a short 'triggered' pulse to all ESPHome targets."""
+        # Send source (if enabled) and trigger state
+        if send_source_text:
+            # Use the triggering entity friendly name
+            await _push_to_all("triggered")  # _push_to_all will set source based on recent triggers
+            # Override source with the entity name for accuracy
+            for t in targets:
+                svc_set_source = f"{t['node']}_set_alarm_source"
+                await _safe_call(svc_set_source, {"alarm_source": friendly})
+        else:
+            await _push_to_all("triggered")
+
+        async def _reset_later() -> None:
+            await asyncio.sleep(trigger_reset_seconds)
+            # Restore the current alarm panel state (so we don't fight Alarmo)
+            st = hass.states.get(alarm_entity)
+            restore = st.state if st else "disarmed"
+            await _push_to_all(restore)
+
+        hass.async_create_task(_reset_later())
+
+    @callback
+    def _handle_trigger_entities(event) -> None:
+        entity_id = event.data.get("entity_id")
+        if not entity_id:
+            return
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if not new_state:
+            return
+
+        # Cooldown per entity to avoid spamming
+        now_ts = dt_util.utcnow().timestamp()
+        last = _last_trigger_ts.get(entity_id, 0.0)
+        if now_ts - last < trigger_cooldown_seconds:
+            return
+
+        # Only trigger on meaningful transitions
+        domain = entity_id.split(".", 1)[0]
+        triggered = False
+        if domain == "binary_sensor":
+            if (old_state is None or old_state.state != "on") and new_state.state == "on":
+                triggered = True
+        else:
+            # For other entity types, any state change away from unknown/unavailable can trigger
+            if new_state.state not in ("unknown", "unavailable") and (not old_state or old_state.state != new_state.state):
+                triggered = True
+
+        if not triggered:
+            return
+
+        _last_trigger_ts[entity_id] = now_ts
+        friendly = new_state.attributes.get("friendly_name") or entity_id
+        hass.async_create_task(_handle_trigger(entity_id, friendly))
+
+    if trigger_entities:
+        unsub_triggers = async_track_state_change_event(hass, trigger_entities, _handle_trigger_entities)
+        entry.async_on_unload(unsub_triggers)
+
     # --- Listener 2: Track recently triggered binary_sensors (universal) ---
     @callback
     def _handle_any_state_change(event) -> None:
@@ -194,6 +269,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data[CONF_ESPHOME_DEVICES] = [legacy_dev]
     if legacy_node and CONF_NODE_NAMES not in data:
         data[CONF_NODE_NAMES] = [legacy_node]
+
+    data.setdefault(CONF_TRIGGER_ENTITIES, [])
+    data.setdefault(CONF_TRIGGER_RESET_SECONDS, DEFAULT_TRIGGER_RESET_SECONDS)
+    data.setdefault(CONF_TRIGGER_COOLDOWN_SECONDS, DEFAULT_TRIGGER_COOLDOWN_SECONDS)
 
     hass.config_entries.async_update_entry(entry, data=data, version=2)
     return True
