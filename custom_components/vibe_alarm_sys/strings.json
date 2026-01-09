@@ -12,7 +12,8 @@
           "send_source_text": "Auslöser-Text senden",
           "trigger_entities": "Zusätzliche Trigger-Entitäten (z. B. Kamera-Bewegung)",
           "trigger_reset_seconds": "Zurücksetzen nach (Sekunden)",
-          "trigger_cooldown_seconds": "Cooldown (Sekunden)"
+          "trigger_cooldown_seconds": "Cooldown (Sekunden)",
+          "prefer_trigger_friendly_name": "Bei Trigger-Entitäten Sensorname statt Zonenname senden"
         }
       }
     },

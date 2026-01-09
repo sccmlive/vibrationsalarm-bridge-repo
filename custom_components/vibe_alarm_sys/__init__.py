@@ -26,6 +26,8 @@ from .const import (
     CONF_TRIGGER_COOLDOWN_SECONDS,
     DEFAULT_TRIGGER_RESET_SECONDS,
     DEFAULT_TRIGGER_COOLDOWN_SECONDS,
+    CONF_PREFER_TRIGGER_FRIENDLY_NAME,
+    DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME,
 )
 
 PLATFORMS: list[str] = []
@@ -53,6 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     alarm_entity = entry.data[CONF_ALARM_ENTITY]
     send_panel_name = entry.data.get(CONF_SEND_PANEL_NAME, True)
     send_source_text = entry.data.get(CONF_SEND_SOURCE_TEXT, True)
+    prefer_trigger_friendly_name = entry.data.get(CONF_PREFER_TRIGGER_FRIENDLY_NAME, DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME)
 
     trigger_entities: list[str] = entry.data.get(CONF_TRIGGER_ENTITIES, [])
     trigger_reset_seconds: int = int(entry.data.get(CONF_TRIGGER_RESET_SECONDS, DEFAULT_TRIGGER_RESET_SECONDS))
@@ -93,6 +96,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Ring buffer: recently triggered binary_sensors (entity_id, timestamp)
     recent_triggers: deque[tuple[str, dt_util.dt.datetime]] = deque(maxlen=120)
+
+    # Last known 'source' attribute from the alarm panel (Alarmo zone text etc.)
+    last_alarm_source: str | None = None
 
     def _record_trigger(entity_id: str) -> None:
         recent_triggers.append((entity_id, dt_util.utcnow()))
@@ -137,7 +143,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 continue
 
             if state_str == "triggered":
-                source = _pick_recent_trigger_name() or "Unbekannter Auslöser"
+                recent = _pick_recent_trigger_name()
+                panel_src = last_alarm_source
+
+                if prefer_trigger_friendly_name:
+                    # Prefer the most recent trigger entity's friendly name, fall back to panel source
+                    source = recent or panel_src or "Unbekannter Auslöser"
+                else:
+                    # Prefer the alarm panel's own source/zone text, fall back to recent trigger name
+                    source = panel_src or recent or "Unbekannter Auslöser"
+
                 await _safe_call(svc_set_source, {"alarm_source": source})
             else:
                 # Clear source on non-trigger states (ESP ignores '-' in your display logic)
@@ -151,6 +166,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
 
         st = new_state.state
+        nonlocal last_alarm_source
+        last_alarm_source = (
+            new_state.attributes.get("source")
+            or new_state.attributes.get("alarm_source")
+            or new_state.attributes.get("changed_by")
+        )
         if st in (None, "unknown", "unavailable"):
             return
 
@@ -169,10 +190,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if send_source_text:
             # Use the triggering entity friendly name
             await _push_to_all("triggered")  # _push_to_all will set source based on recent triggers
-            # Override source with the entity name for accuracy
-            for t in targets:
-                svc_set_source = f"{t['node']}_set_alarm_source"
-                await _safe_call(svc_set_source, {"alarm_source": friendly})
+            # Override source with the entity name for accuracy (optional)
+            if prefer_trigger_friendly_name:
+                for t in targets:
+                    svc_set_source = f"{t['node']}_set_alarm_source"
+                    await _safe_call(svc_set_source, {"alarm_source": friendly})
         else:
             await _push_to_all("triggered")
 
@@ -256,7 +278,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate config entries to the new multi-target format."""
-    if entry.version >= 2:
+    if entry.version >= 3:
         return True
 
     data = dict(entry.data)
@@ -273,6 +295,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data.setdefault(CONF_TRIGGER_ENTITIES, [])
     data.setdefault(CONF_TRIGGER_RESET_SECONDS, DEFAULT_TRIGGER_RESET_SECONDS)
     data.setdefault(CONF_TRIGGER_COOLDOWN_SECONDS, DEFAULT_TRIGGER_COOLDOWN_SECONDS)
+    data.setdefault(CONF_PREFER_TRIGGER_FRIENDLY_NAME, DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME)
 
-    hass.config_entries.async_update_entry(entry, data=data, version=2)
+    hass.config_entries.async_update_entry(entry, data=data, version=3)
     return True

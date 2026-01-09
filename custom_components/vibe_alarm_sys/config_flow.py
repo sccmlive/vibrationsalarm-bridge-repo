@@ -23,6 +23,8 @@ from .const import (
     CONF_TRIGGER_ENTITIES,
     CONF_TRIGGER_RESET_SECONDS,
     CONF_TRIGGER_COOLDOWN_SECONDS,
+    CONF_PREFER_TRIGGER_FRIENDLY_NAME,
+    DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME,
     DEFAULT_TRIGGER_RESET_SECONDS,
     DEFAULT_TRIGGER_COOLDOWN_SECONDS,
 )
@@ -63,6 +65,7 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             esphome_device_ids = user_input[CONF_ESPHOME_DEVICES]
             send_panel_name = user_input.get(CONF_SEND_PANEL_NAME, DEFAULT_SEND_PANEL_NAME)
             send_source_text = user_input.get(CONF_SEND_SOURCE_TEXT, DEFAULT_SEND_SOURCE_TEXT)
+            prefer_trigger_friendly_name = bool(user_input.get(CONF_PREFER_TRIGGER_FRIENDLY_NAME, DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME))
 
             trigger_entities = user_input.get(CONF_TRIGGER_ENTITIES) or []
             trigger_reset_seconds = int(user_input.get(CONF_TRIGGER_RESET_SECONDS, DEFAULT_TRIGGER_RESET_SECONDS))
@@ -97,6 +100,7 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_TRIGGER_ENTITIES: trigger_entities,
                         CONF_TRIGGER_RESET_SECONDS: trigger_reset_seconds,
                         CONF_TRIGGER_COOLDOWN_SECONDS: trigger_cooldown_seconds,
+                        CONF_PREFER_TRIGGER_FRIENDLY_NAME: prefer_trigger_friendly_name,
                     },
                 )
 
@@ -112,6 +116,7 @@ class VibrationsalarmBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_NODE_NAMES, default=""): str,
                 vol.Optional(CONF_SEND_PANEL_NAME, default=DEFAULT_SEND_PANEL_NAME): bool,
                 vol.Optional(CONF_SEND_SOURCE_TEXT, default=DEFAULT_SEND_SOURCE_TEXT): bool,
+                vol.Optional(CONF_PREFER_TRIGGER_FRIENDLY_NAME, default=DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME): bool,
                 vol.Optional(CONF_TRIGGER_ENTITIES, default=[]): selector.EntitySelector(
                     selector.EntitySelectorConfig(multiple=True)
                 ),

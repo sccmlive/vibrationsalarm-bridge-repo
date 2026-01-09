@@ -30,3 +30,8 @@ CONF_TRIGGER_COOLDOWN_SECONDS = "trigger_cooldown_seconds"
 
 DEFAULT_TRIGGER_RESET_SECONDS = 10
 DEFAULT_TRIGGER_COOLDOWN_SECONDS = 5
+
+# If enabled, when a configured trigger entity fires, its friendly name is preferred
+# over the alarm panel's zone/source text.
+CONF_PREFER_TRIGGER_FRIENDLY_NAME = "prefer_trigger_friendly_name"
+DEFAULT_PREFER_TRIGGER_FRIENDLY_NAME = True
