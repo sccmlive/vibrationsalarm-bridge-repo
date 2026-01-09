@@ -49,8 +49,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     alarm_entity = entry.data[CONF_ALARM_ENTITY]
 
     send_panel_name = entry.data.get(CONF_SEND_PANEL_NAME, True)
-    send_source_text = entry.data.get(CONF_SEND_SOURCE_TEXT,
-    CONF_TRIGGER_ENTITIES, True)
+    send_source_text = entry.data.get(CONF_SEND_SOURCE_TEXT, True)
 
     # --- Multi ESPHome targets ---
     device_ids = entry.data.get(CONF_ESPHOME_DEVICES) or []
