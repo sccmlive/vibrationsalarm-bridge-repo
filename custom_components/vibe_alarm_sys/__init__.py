@@ -264,6 +264,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # 2) Universal tracking for binary_sensors used in alarm setups
         if old != new and new in ACTIVE_STATES:
+            attrs = new_state.attributes or {}
+            name = (getattr(new_state, "name", None) or attrs.get("friendly_name") or "").strip().lower()
+            device_class = (attrs.get("device_class") or "").strip().lower()
+            model_type = (attrs.get("model_type") or "").strip()
+
+            # Ignore virtual/group "SecurityZone" entities (e.g. Alarmo zones or Homematic zones).
+            # These often flip to active right after the real sensor and would otherwise always
+            # become the "last trigger" (e.g. "EXTERNAL SecurityZone").
+            if model_type == "HmIP-SecurityZone":
+                return
+            if attrs.get("is_group") is True and device_class == "safety":
+                return
+            if "securityzone" in name or "security zone" in name:
+                return
+
             _record_trigger(entity_id)
 
     unsub_bus = hass.bus.async_listen("state_changed", _handle_any_state_change)
